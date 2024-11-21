@@ -1,7 +1,12 @@
 from flask import Flask, jsonify, request
+from flask_bcrypt import Bcrypt
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required
 import mysql.connector
 
 app = Flask(__name__)
+app.config['JWT_SECRET_KEY'] = 'sua-chave-secreta'  # Troque por uma chave segura
+bcrypt = Bcrypt(app)
+jwt = JWTManager(app)
 
 # Função para conectar ao banco de dados
 def get_db_connection():
@@ -220,7 +225,61 @@ def delete_professor(id_professor):
         cursor.close()
         conn.close()
 
+# Rota para registrar novos usuários
+@app.route('/register', methods=['POST'])
+def register_user():
+    try:
+        data = request.json
+        username = data['username']
+        password = data['password']
+        tipo_usuario = data['user']
 
+        # Hash da senha
+        password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Usuario (nome_usuario, senha, tipo_usuario, status) VALUES (%s, %s, %s, %s)", (username, password_hash, tipo_usuario, "Ativo")
+        )
+        conn.commit()
+        return jsonify({"message": "Usuário registrado com sucesso!"}), 201
+    except mysql.connector.Error as err:
+        return jsonify({"error": str(err)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+# Para para login
+@app.route('/login', methods=['POST'])
+def login_user():
+    try:
+        data = request.json
+        username = data['username']
+        password = data['password']
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM Usuario WHERE nome_usuario = %s", (username,))
+        user = cursor.fetchone()
+
+        if user and bcrypt.check_password_hash(user['senha'], password):
+            # Criação do token JWT
+            access_token = create_access_token(identity={"id": user['id_usuarios'], "username": user['nome_usuario']})
+            return jsonify({"access_token": access_token}), 200
+        else:
+            return jsonify({"error": "Usuário ou senha inválidos"}), 401
+    except mysql.connector.Error as err:
+        return jsonify({"error": str(err)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+# Rpta de proteção (exemplo)
+@app.route('/protected', methods=['GET'])
+@jwt_required()
+def protected():
+    return jsonify({"message": "Acesso permitido! Você está autenticado."}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
